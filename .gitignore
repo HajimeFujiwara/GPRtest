@@ -159,3 +159,20 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 experiments/data.csv
+GPR/test_data.csv
+SmallTests/test_moving_average_analyzer.py
+SmallTests/moving_average_analyzer.py
+SmallTests/internPreparation.ipynb
+SmallTests/FxModelPreAnalysis.ipynb
+nonTecnicalMatters/z-kai-20231119meetup.md
+nonTecnicalMatters/z-kai-20231119meetup.html
+nonTecnicalMatters/internSpreadSheetLabeling.md
+SmallTests/moving_average_analyzer.py
+SmallTests/internPreparation.ipynb
+SmallTests/FxModelPreAnalysis.ipynb
+SmallTests/BayseStatExcercises.ipynb
+GPR/GPRTest.ipynb
+SmallTests/moving_average_analyzer.py
+SmallTests/FxModelPreAnalysis.ipynb
+SmallTests/internPreparation.ipynb
+SmallTests/moving_average_analyzer.py

@@ -3,38 +3,19 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
+from dataclasses import dataclass
 
-class MovingAverageAnalyzer:
+@dataclass
+class DataPreprocessor:
+    filename: str
 
-    def __init__(self):
-        # メンバ変数の初期化
-        self.df = None
-        self.moving_average = None
-        self.moving_average_return = None
-
-    def set_data_from_file(self, filename: str):
-        # CSVファイルからデータを読み込み
-        self.df = pd.read_csv(filename)
-        # 列名を'日付け'から'Date'に変更
+    def __post_init__(self):
+        self.df = pd.read_csv(self.filename)
         self.df = self.df.rename(columns={'日付け': 'Date'})
-        self.df['Date'] = pd.to_datetime(self.df['Date'])  # 日付けをdatetime型に変換
-        self.df = self.df.set_index('Date')  # 日付けをインデックスに設定
-        # 列名を'終値'から'Closing'に変更
+        self.df['Date'] = pd.to_datetime(self.df['Date'])
+        self.df = self.df.set_index('Date')
         self.df = self.df.rename(columns={'終値': 'Closing'})
-        # データを日付で昇順に並べ替え
-        self.df = self.df.sort_values('Date')        
-        
-        # メンバ変数の初期化
-        self.moving_average = None
-        self.moving_average_return = None
-
-    def set_data(self, df: pd.DataFrame):
-        # データを日付で昇順に並べ替え
-        self.df = df.sort_values('Date')
-
-        # メンバ変数の初期化
-        self.moving_average = None
-        self.moving_average_return = None
+        self.df = self.df.sort_values('Date')
 
     def calculate_moving_average(self, n: int, m: int):
         # n日間の移動平均の計算

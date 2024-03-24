@@ -166,3 +166,5 @@ nonTecnicalMatters/internSpreadSheetLabeling.md
 nonTecnicalMatters/internSpreadSheetLabeling.html
 SmallTests/BayseStatExcercises.ipynb
 SmallTests/test_moving_average_analyzer.py
+GPR/FXmodel/data_preprocessing.py
+GPR/FXmodel/FxModelReplica.ipynb

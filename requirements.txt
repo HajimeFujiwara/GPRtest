@@ -1,0 +1,8 @@
+# Python dependencies for GPRtest project
+# Install with: pip install -r requirements.txt
+
+numpy
+pandas
+matplotlib
+scipy
+jupyter

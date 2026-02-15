@@ -6,3 +6,7 @@ pandas
 matplotlib
 scipy
 jupyter
+requests
+openpyxl
+lightgbm
+scikit-learn

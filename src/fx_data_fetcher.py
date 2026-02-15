@@ -1,8 +1,7 @@
-"""FX daily data fetcher supporting Stooq and FRED.
+"""Stooq/FRED から日次FXデータを取得するユーティリティ。
 
-This module provides a small class to download daily FX rates for USDJPY and
-EURUSD from free data sources and save them as CSV files. Missing values are
-dropped, and the returned DataFrames are sorted by date.
+USDJPY と EURUSD を対象に、データ取得・整形・CSV保存までを
+一貫して提供する。
 """
 from __future__ import annotations
 
@@ -11,7 +10,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from io import StringIO
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 import pandas as pd
 import requests
@@ -20,21 +19,24 @@ logger = logging.getLogger(__name__)
 
 DateLike = Union[str, date, datetime]
 
+SUPPORTED_PAIRS = ("USDJPY", "EURUSD")
+COMMON_REQUIRED_COLUMNS = ("date", "close")
+
 
 @dataclass(frozen=True)
 class FXDataFetcher:
-    """Fetch daily FX rates from Stooq or FRED.
+    """日次FXレートを Stooq または FRED から取得する。
 
     Parameters
     ----------
     source : Literal["stooq", "fred"]
-        Data source to use.
+        取得元データソース。
     data_dir : Path
-        Directory where CSV outputs will be saved.
+        CSV保存先ディレクトリ。
     fred_api_key : Optional[str]
-        API key required for FRED. Not needed for Stooq.
+        FRED利用時のAPIキー（Stooq利用時は不要）。
     timeout : int
-        Timeout in seconds for HTTP requests.
+        HTTPリクエストのタイムアウト秒。
     """
 
     source: Literal["stooq", "fred"]
@@ -54,7 +56,7 @@ class FXDataFetcher:
             raise ValueError("source must be 'stooq' or 'fred'")
         object.__setattr__(self, "source", normalized_source)
 
-        resolved_data_dir = self.data_dir if isinstance(self.data_dir, Path) else Path(self.data_dir)
+        resolved_data_dir = self.data_dir
         resolved_data_dir.mkdir(parents=True, exist_ok=True)
         object.__setattr__(self, "data_dir", resolved_data_dir.resolve())
 
@@ -67,24 +69,25 @@ class FXDataFetcher:
         start_date: Optional[DateLike] = None,
         end_date: Optional[DateLike] = None,
     ) -> pd.DataFrame:
-        """Fetch FX data for a given pair.
+        """指定した通貨ペアのFXデータを取得する。
 
         Parameters
         ----------
         pair : str
-            Currency pair, e.g., "USDJPY" or "EURUSD".
+            通貨ペア（例: "USDJPY", "EURUSD"）。
         start_date : Optional[DateLike]
-            Inclusive start date. If None, the source default is used.
+            取得開始日（含む）。None の場合はソース既定。
         end_date : Optional[DateLike]
-            Inclusive end date. If None, the source default is used.
+            取得終了日（含む）。None の場合はソース既定。
 
         Returns
         -------
         pd.DataFrame
-            DataFrame with columns ["date", "close"], sorted by date, with missing rows dropped.
+            ["date", "close"] 列を持つDataFrame。
+            日付昇順・欠損行除去済み。
         """
 
-        pair_key = pair.strip().upper()
+        pair_key = self._normalize_pair(pair)
         if self.source == "stooq":
             df = self._fetch_from_stooq(pair_key)
         else:
@@ -102,33 +105,33 @@ class FXDataFetcher:
         start_date: Optional[DateLike] = None,
         end_date: Optional[DateLike] = None,
     ) -> Path:
-        """Fetch FX data and save to CSV.
+        """FXデータを取得してCSV保存する。
 
         Parameters
         ----------
         pair : str
-            Currency pair to fetch.
+            取得する通貨ペア。
         output_path : Optional[Path]
-            Destination CSV path. Defaults to `<data_dir>/<pair>.csv` (lowercase).
+            出力先CSVパス。Noneなら `<data_dir>/<pair>.csv`（小文字）。
         start_date : Optional[DateLike]
-            Inclusive start date.
+            取得開始日（含む）。
         end_date : Optional[DateLike]
-            Inclusive end date.
+            取得終了日（含む）。
 
         Returns
         -------
         Path
-            Path to the written CSV file.
+            書き出したCSVファイルパス。
         """
 
         df = self.fetch_pair(pair=pair, start_date=start_date, end_date=end_date)
-        destination = output_path or (self.data_dir / f"{pair.lower()}.csv")
+        pair_key = self._normalize_pair(pair)
+        destination = output_path or (self.data_dir / f"{pair_key.lower()}.csv")
         self.save_csv(df, destination)
         return destination
 
     def save_csv(self, df: pd.DataFrame, output_path: Path) -> None:
-        """Save a DataFrame to CSV, sorted by date."""
-        output_path = output_path if isinstance(output_path, Path) else Path(output_path)
+        """DataFrameを日付昇順でCSV保存する。"""
         output_path.parent.mkdir(parents=True, exist_ok=True)
         sorted_df = df.copy()
         sorted_df = sorted_df.sort_values("date")
@@ -136,6 +139,7 @@ class FXDataFetcher:
         logger.info("Saved %d rows to %s", len(sorted_df), output_path)
 
     def _fetch_from_stooq(self, pair: str) -> pd.DataFrame:
+        """Stooqから通貨ペアデータを取得し標準形式に整形する。"""
         symbol = pair.lower()
         params = {"s": symbol, "i": "d"}
         response = requests.get(self._STOOQ_BASE, params=params, timeout=self.timeout)
@@ -146,37 +150,13 @@ class FXDataFetcher:
         if df.empty:
             raise ValueError(f"Stooq returned no data for {pair}")
 
-        normalized_columns = {col: str(col).replace("\ufeff", "").strip() for col in df.columns}
-        df = df.rename(columns=normalized_columns)
-
-        lowered_to_original = {str(col).casefold(): col for col in df.columns}
-        stooq_column_aliases = {
-            "date": ["date", "data"],
-            "close": ["close", "zamkniecie"],
+        aliases = {
+            "date": ("date", "data"),
+            "close": ("close", "zamkniecie"),
         }
-
-        rename_map: dict[str, str] = {}
-        for target, aliases in stooq_column_aliases.items():
-            matched_column = next(
-                (lowered_to_original[alias.casefold()] for alias in aliases if alias.casefold() in lowered_to_original),
-                None,
-            )
-            if matched_column is not None:
-                rename_map[matched_column] = target
-
-        df = df.rename(columns=rename_map)
-        missing_columns = [col for col in ("date", "close") if col not in df.columns]
-        if missing_columns:
-            available = ", ".join(map(str, df.columns))
-            missing = ", ".join(missing_columns)
-            raise ValueError(
-                f"Stooq schema mismatch for {pair}: missing columns [{missing}] (available: [{available}])"
-            )
-
-        df["date"] = pd.to_datetime(df["date"], errors="coerce", utc=False)
-        df["close"] = pd.to_numeric(df["close"], errors="coerce")
-        df = df.dropna(subset=["date", "close"]).reset_index(drop=True)
-        return df[["date", "close"]]
+        normalized = self._rename_columns_by_alias(df, aliases)
+        self._ensure_required_columns(normalized, COMMON_REQUIRED_COLUMNS, source_name="Stooq", pair=pair)
+        return self._coerce_and_clean_common_columns(normalized)
 
     def _fetch_from_fred(
         self,
@@ -184,14 +164,15 @@ class FXDataFetcher:
         start_date: Optional[DateLike],
         end_date: Optional[DateLike],
     ) -> pd.DataFrame:
+        """FREDから通貨ペアデータを取得し標準形式に整形する。"""
         series_id = self._FRED_SERIES.get(pair)
         if not series_id:
             raise ValueError(f"Unsupported pair for FRED: {pair}")
 
-        params = {
+        params: dict[str, str] = {
             "file_type": "json",
             "series_id": series_id,
-            "api_key": self.fred_api_key,
+            "api_key": self.fred_api_key or "",
         }
         if start_date is not None:
             params["observation_start"] = self._to_iso_date(start_date)
@@ -207,20 +188,69 @@ class FXDataFetcher:
         if not observations:
             raise ValueError(f"FRED returned no data for {pair}")
 
-        records = []
+        records: list[dict[str, Any]] = []
         for obs in observations:
             value = obs.get("value")
             value = None if value in (".", None) else value
             records.append({"date": obs.get("date"), "close": value})
 
         df = pd.DataFrame.from_records(records)
-        df["date"] = pd.to_datetime(df["date"], errors="coerce", utc=False)
-        df["close"] = pd.to_numeric(df["close"], errors="coerce")
-        df = df.dropna(subset=["date", "close"]).reset_index(drop=True)
-        return df[["date", "close"]]
+        self._ensure_required_columns(df, COMMON_REQUIRED_COLUMNS, source_name="FRED", pair=pair)
+        return self._coerce_and_clean_common_columns(df)
+
+    @staticmethod
+    def _normalize_pair(pair: str) -> str:
+        """通貨ペア文字列を正規化し、対応可否を検証する。"""
+        pair_key = pair.strip().upper()
+        if pair_key not in SUPPORTED_PAIRS:
+            raise ValueError(f"Unsupported pair: {pair_key}. supported={SUPPORTED_PAIRS}")
+        return pair_key
+
+    @staticmethod
+    def _rename_columns_by_alias(df: pd.DataFrame, aliases: dict[str, tuple[str, ...]]) -> pd.DataFrame:
+        """列名を別名辞書で標準列名に寄せる。"""
+        normalized_columns = {col: str(col).replace("\ufeff", "").strip() for col in df.columns}
+        out = df.rename(columns=normalized_columns).copy()
+
+        lower_to_original = {str(col).casefold(): col for col in out.columns}
+        rename_map: dict[str, str] = {}
+        for target, candidates in aliases.items():
+            match = next((lower_to_original[c.casefold()] for c in candidates if c.casefold() in lower_to_original), None)
+            if match is not None:
+                rename_map[match] = target
+
+        return out.rename(columns=rename_map)
+
+    @staticmethod
+    def _ensure_required_columns(
+        df: pd.DataFrame,
+        required_columns: tuple[str, ...],
+        source_name: str,
+        pair: str,
+    ) -> None:
+        """必須列の存在を検証し、欠落時は原因が分かる例外を送出する。"""
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if not missing_columns:
+            return
+
+        available = ", ".join(map(str, df.columns))
+        missing = ", ".join(missing_columns)
+        raise ValueError(
+            f"{source_name} schema mismatch for {pair}: missing columns [{missing}] (available: [{available}])"
+        )
+
+    @staticmethod
+    def _coerce_and_clean_common_columns(df: pd.DataFrame) -> pd.DataFrame:
+        """date/close列の型変換と欠損除去を共通処理として実施する。"""
+        out = df.copy()
+        out["date"] = pd.to_datetime(out["date"], errors="coerce", utc=False)
+        out["close"] = pd.to_numeric(out["close"], errors="coerce")
+        out = out.dropna(subset=["date", "close"]).reset_index(drop=True)
+        return out[["date", "close"]]
 
     @staticmethod
     def _to_iso_date(value: DateLike) -> str:
+        """日付入力を YYYY-MM-DD 形式に変換する。"""
         parsed = pd.to_datetime(value, errors="coerce")
         if pd.isna(parsed):
             raise ValueError(f"Invalid date value: {value}")
@@ -232,6 +262,7 @@ class FXDataFetcher:
         start_date: Optional[DateLike],
         end_date: Optional[DateLike],
     ) -> pd.DataFrame:
+        """開始日・終了日でDataFrameをフィルタする。"""
         result = df.copy()
         if start_date is not None:
             start_ts = pd.to_datetime(start_date, errors="coerce")
